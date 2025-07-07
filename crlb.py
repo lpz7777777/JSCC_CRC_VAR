@@ -2,6 +2,20 @@ import os
 import torch
 import numpy as np
 import time
+from process_list import get_compton_backproj_list
+
+def get_coor_plane(fov_arg):
+    # get the coordinate of fov
+    fov_coor = torch.ones([fov_arg.pixel_num_x, fov_arg.pixel_num_y, 3])
+    min_x = -(fov_arg.pixel_num_x / 2 - 0.5) * fov_arg.pixel_l_x
+    max_x = (fov_arg.pixel_num_x / 2 - 0.5) * fov_arg.pixel_l_x
+    min_y = -(fov_arg.pixel_num_y / 2 - 0.5) * fov_arg.pixel_l_y
+    max_y = (fov_arg.pixel_num_y / 2 - 0.5) * fov_arg.pixel_l_y
+    fov_coor[:, :, 0] *= torch.linspace(min_x, max_x, fov_arg.pixel_num_x).reshape([1, -1])
+    fov_coor[:, :, 1] *= torch.linspace(min_y, max_y, fov_arg.pixel_num_y).reshape([-1, 1])
+    fov_coor[:, :, 2] = fov_arg.fov_z
+    fov_coor = fov_coor.reshape(-1, 3)
+    return fov_coor
 
 def get_r_matrix(fov_arg):
     R = torch.zeros((fov_arg.pixel_num, fov_arg.pixel_num), dtype=torch.float32)
@@ -35,11 +49,58 @@ def get_r_matrix(fov_arg):
 
     return R
 
-def get_crc_var(R, img, eval_arg, fov_arg, save_path, name_sys, name_val, device):
+def get_sysmat_sc(fov_arg, name_sys, name_val, device):
+    # get sysmat of sc
+    sysmat_file_path = "./SysMat/" + name_sys + "/SC/" + name_val
+    sysmat_sc = torch.from_numpy(np.reshape(np.fromfile(sysmat_file_path, dtype=np.float32),[fov_arg.pixel_num, -1])).transpose(0, 1)
+    sysmat_sc = sysmat_sc.to(device, non_blocking=True)
+    return sysmat_sc
+
+def get_sysmat_compton(fov_arg, compton_arg, name_sys, name_val, device):
+    # get sysmat of compton
+    time_start = time.time()
+
+    # get sysmat of sc
+    sysmat_file_path = "./SysMat/" + name_sys + "/SC/" + name_val
+    sysmat_sc = torch.from_numpy(np.reshape(np.fromfile(sysmat_file_path, dtype=np.float32),[fov_arg.pixel_num, -1])).transpose(0, 1)
+    sysmat_sc = sysmat_sc.to(device, non_blocking=True)
+
+    # load list data
+    list_file_path = "./SysMat/" + name_sys + "/Compton/" + name_val + ".csv"
+    list_origin = torch.from_numpy(np.genfromtxt(list_file_path, delimiter=",", dtype=np.float32)[:, 0:4])
+    list_origin = list_origin[0:int(list_origin.size(0) * compton_arg.ds), :]   # down sampling
+
+    # load detector
+    detector_file_path = "./SysMat/" + name_sys + "/Detector/" + name_val + ".csv"
+    detector = torch.from_numpy(np.genfromtxt(detector_file_path, delimiter=",", dtype=np.float32)[:, 1:4])
+    detector = detector.to(device, non_blocking=True)
+
+    # get fov coor
+    coor_plane = get_coor_plane(fov_arg).to(device, non_blocking=True)
+
+    # process list
+    sysmat_compton = []
+    list_origin_chunks = torch.chunk(list_origin, compton_arg.num_workers, dim=0)
+    for list_origin_tmp_chunk in list_origin_chunks:
+        sysmat_compton_chunk = get_compton_backproj_list(list_origin_tmp_chunk.to(device), compton_arg, detector, coor_plane, sysmat_sc, device)
+        sysmat_compton.append(sysmat_compton_chunk)
+        torch.cuda.empty_cache()
+        print("Chunk Num", str(len(sysmat_compton)), "ends, time used:", time.time() - time_start, "s")
+
+    sysmat_compton = torch.cat(sysmat_compton, dim=0)
+    avg_sens_tmp = torch.sum(sysmat_compton).item() / fov_arg.pixel_num
+    avg_sens_true = sysmat_compton.size(0) / compton_arg.photon_num
+    sysmat_compton = sysmat_compton * avg_sens_true / avg_sens_tmp
+    sysmat_compton = sysmat_compton.to(device, non_blocking=True)
+
+    return sysmat_compton
+
+def get_crc_var_single(sysmat, R, img, eval_arg, fov_arg, save_path, name_val):
     print("----", name_val, "starts----")
-    sysmat_file_path = "./SysMat/" + name_sys + "/" + name_val
-    sysmat = torch.from_numpy(np.reshape(np.fromfile(sysmat_file_path, dtype=np.float32),[fov_arg.pixel_num, -1])).transpose(0, 1)
-    sysmat = sysmat.to(device, non_blocking=True)
+
+    # makedirs
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
 
     # Calculate average sensitivity（uniform phantom over whole fov）
     avg_sens = torch.sum(torch.matmul(sysmat, img)).item() / fov_arg.pixel_num
@@ -110,3 +171,31 @@ def get_crc_var(R, img, eval_arg, fov_arg, save_path, name_sys, name_val, device
     save_path_tmp = f"{save_path}/CRC_mean_{name_val}"
     with open(save_path_tmp, "w") as file:
         CRC_mean.cpu().numpy().astype('float32').tofile(file)
+
+def get_crc_var(flag_get, name_factor_list, R, img, eval_arg, fov_arg, compton_arg, save_path, name_sys, device):
+    time_start = time.time()
+    for name_val in name_factor_list:
+        # get sysmat
+        if sum(flag_get) > 1 or flag_get[2] == 1:
+            sysmat_sc = get_sysmat_sc(fov_arg, name_sys, name_val, device)
+            sysmat_compton = get_sysmat_compton(fov_arg, compton_arg, name_sys, name_val, device)
+        elif flag_get[1] == 1:
+            sysmat_compton = get_sysmat_compton(fov_arg, compton_arg, name_sys, name_val, device)
+        else:
+            sysmat_sc = get_sysmat_sc(fov_arg, name_sys, name_val, device)
+
+        # get and save crc-var
+        if flag_get[0] == 1:
+            save_path_tmp_sc = f"{save_path}/{name_sys}/SC"
+            get_crc_var_single(sysmat_sc, R, img, eval_arg, fov_arg, save_path_tmp_sc, name_val)
+
+        if flag_get[1] == 1:
+            save_path_tmp_compton = f"{save_path}/{name_sys}/Compton"
+            get_crc_var_single(sysmat_compton, R, img, eval_arg, fov_arg, save_path_tmp_compton, name_val)
+
+        if flag_get[2] == 1:
+            sysmat_jscc = torch.cat((sysmat_sc, sysmat_compton), dim=0)
+            save_path_tmp_jscc = f"{save_path}/{name_sys}/JSCC"
+            get_crc_var_single(sysmat_jscc, R, img, eval_arg, fov_arg, save_path_tmp_jscc, name_val)
+
+        print(name_val, "ends, time used:", time.time() - time_start, "s")

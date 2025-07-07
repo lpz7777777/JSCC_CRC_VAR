@@ -7,9 +7,13 @@ import argparse
 
 if __name__ == '__main__':
     with torch.no_grad():
+        # get what kind of crc-var
+        # [0]: sc; [1]: compton; [2]jscc
+        flag_get = [1, 1, 1]
+
         # file path
         name_sys = "SysMat_20250307_JSCCGC_CollimatorT"
-        name_factor_list = ["0mm", "3mm"]
+        name_factor_list = ["0mm"]
 
         # fov factors
         fov_arg = argparse.ArgumentParser().parse_args()
@@ -21,7 +25,23 @@ if __name__ == '__main__':
         fov_arg.pixel_l_x = 3  # mm
         fov_arg.pixel_l_y = 3
         fov_arg.pixel_l_z = 3
+        fov_arg.fov_z = -100
         fov_arg.diameter_roi = 300
+
+        # energy factors (for compton)
+        compton_arg = argparse.ArgumentParser().parse_args()
+        compton_arg.e0 = 0.662  # energy of incident photons
+        ene_resolution_662keV = 0.1  # energy resolution at 662keV
+        compton_arg.ene_resolution = ene_resolution_662keV * (0.662 / compton_arg.e0) ** 0.5
+        compton_arg.ene_threshold_max = 0.477
+        compton_arg.ene_threshold_min = 0.050
+
+        compton_arg.delta_r1 = 1.5      # mm
+        compton_arg.delta_r2 = 1.5      # mm
+        compton_arg.photon_num = 5e9
+
+        compton_arg.num_workers = 50
+        compton_arg.ds = 1      # down sampling ratio of list data
 
         # beta level
         lvl_start = -9
@@ -34,9 +54,7 @@ if __name__ == '__main__':
         eval_point_z = torch.tensor([], dtype=torch.float32)
 
         # save path
-        save_path = f"./Result/{name_sys}"
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
+        save_path = "./Result"
 
         # --------Step1: Checking Devices--------
         time_start = time.time()
@@ -81,7 +99,6 @@ if __name__ == '__main__':
         # --------Step3: Main Iteration--------
         print("--------Step3: Main Iteration--------")
         print("Main Iteration starts")
-        for name_val in name_factor_list:
-            # get and save crc-var
-            crlb.get_crc_var(R, img, eval_arg, fov_arg, save_path, name_sys, name_val, device)
-            print(name_val, "ends, time used:", time.time() - time_start, "s")
+        crlb.get_crc_var(flag_get, name_factor_list, R, img, eval_arg, fov_arg, compton_arg, save_path, name_sys, device)
+
+        print("Total time used:", time.time() - time_start)
