@@ -13,7 +13,7 @@ if __name__ == '__main__':
 
         # file path
         name_sys = "SysMat_20250307_JSCCGC_CollimatorT"
-        name_factor_list = ["0mm"]
+        name_factor_list = ["0mm", "3mm", "6mm"]
 
         # fov factors
         fov_arg = argparse.ArgumentParser().parse_args()
@@ -36,9 +36,9 @@ if __name__ == '__main__':
         compton_arg.ene_threshold_max = 0.477
         compton_arg.ene_threshold_min = 0.050
 
-        compton_arg.delta_r1 = 1.5      # mm
-        compton_arg.delta_r2 = 1.5      # mm
-        compton_arg.photon_num = 5e9
+        compton_arg.delta_r1 = 1.25      # mm
+        compton_arg.delta_r2 = 1.25      # mm
+        compton_arg.photon_num = 1e9
 
         compton_arg.num_workers = 50
         compton_arg.ds = 1      # down sampling ratio of list data

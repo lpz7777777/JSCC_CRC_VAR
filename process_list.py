@@ -29,7 +29,7 @@ def get_compton_backproj_list(list_origin, compton_arg, detector, coor_polar, sy
     # det_pos
     pos1 = detector[cpnum1 - 1, :]
     pos2 = detector[cpnum2 - 1, :]
-    flag = abs(pos1[:, 1] - pos2[:, 1])>0.1
+    flag = abs(pos1[:, 2] - pos2[:, 2])>0.1
 
     cpnum1 = cpnum1[flag]
     cpnum2 = cpnum2[flag]

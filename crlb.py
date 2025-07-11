@@ -88,8 +88,13 @@ def get_sysmat_compton(fov_arg, compton_arg, name_sys, name_val, device):
         print("Chunk Num", str(len(sysmat_compton)), "ends, time used:", time.time() - time_start, "s")
 
     sysmat_compton = torch.cat(sysmat_compton, dim=0)
+    compton_event_count = sysmat_compton.size(0)
+    size_sysmat_compton = sysmat_compton.element_size() * sysmat_compton.nelement()
+    print("Compton events = ", compton_event_count)
+    print("The size of t is ", size_sysmat_compton / (1024 ** 3), " GB")
+
     avg_sens_tmp = torch.sum(sysmat_compton).item() / fov_arg.pixel_num
-    avg_sens_true = sysmat_compton.size(0) / compton_arg.photon_num
+    avg_sens_true = compton_event_count / compton_arg.photon_num
     sysmat_compton = sysmat_compton * avg_sens_true / avg_sens_tmp
     sysmat_compton = sysmat_compton.to(device, non_blocking=True)
 
